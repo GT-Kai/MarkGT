@@ -32,14 +32,14 @@
 
 ### 安装可执行程序
 
-1. 从[Releases](https://github.com/yourusername/MarkGT/releases)下载最新版本
+1. 从[Releases](https://github.com/gt-kai/MarkGT/releases)下载最新版本
 2. 解压后双击运行`MarkGT.exe`
 
 ### 从源码安装
 
 1. 克隆仓库
    ```bash
-   git clone https://github.com/yourusername/MarkGT.git
+   git clone https://github.com/gt-kai/MarkGT.git
    cd MarkGT
    ```
 
