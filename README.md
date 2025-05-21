@@ -109,4 +109,4 @@
 
 项目作者 - [@yourusername](https://github.com/GT—Kai)
 
-项目链接: [ttps://github.com/GT-Kai/MarkGT](https://github.com/GT-Kai/MarkGT) 
+项目链接: [https://github.com/yourusername/MarkGT](https://github.com/yourusername/MarkGT) 
