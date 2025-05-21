@@ -1,6 +1,8 @@
 import PyInstaller.__main__
 import os
 from PIL import Image
+from PyInstaller.utils.hooks import collect_dynamic_libs
+import PyQt6
 
 # 获取当前目录
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -39,6 +41,40 @@ params = [
 # 如果图标存在，添加到参数中
 if icon_path:
     params.append(f'--icon={icon_path}')
+
+# === 新增：强制收集 QtNetwork 动态库 ===
+binaries = collect_dynamic_libs('PyQt6.QtNetwork')
+for src, dest in binaries:
+    params.append(f'--add-binary={src};{os.path.dirname(dest)}')
+
+# === 手动添加 Qt6Network.dll ===
+qt_network_dll = os.path.join(
+    os.path.dirname(__import__('PyQt6').__file__),
+    'Qt6', 'bin', 'Qt6Network.dll'
+)
+if os.path.exists(qt_network_dll):
+    params.append(f'--add-binary={qt_network_dll};.')
+
+
+# === 自动添加所需DLL ===
+NEEDED_DLLS = [
+    'Qt6Network.dll',
+    'Qt6WebSockets.dll',
+    'Qt6Core.dll',
+    'Qt6Gui.dll',
+    'Qt6Widgets.dll',
+    'Qt6PrintSupport.dll',
+    'Qt6Svg.dll',
+    'Qt6SvgWidgets.dll',
+    # 你还可以继续加其它需要的 DLL
+]
+qt_bin_dir = os.path.join(os.path.dirname(PyQt6.__file__), 'Qt6', 'bin')
+for dll in NEEDED_DLLS:
+    dll_path = os.path.join(qt_bin_dir, dll)
+    if os.path.exists(dll_path):
+        params.append(f'--add-binary={dll_path};.')
+    else:
+        print(f'警告: 未找到 {dll_path}')
 
 # 执行打包
 PyInstaller.__main__.run(params) 

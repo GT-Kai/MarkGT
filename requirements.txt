@@ -6,3 +6,4 @@ watchdog==3.0.0
 mistune==3.0.2 
 pyinstaller
 pillow
+pywin32

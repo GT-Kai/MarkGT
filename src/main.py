@@ -4,10 +4,48 @@ import traceback
 import datetime
 import re
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
-                            QMenuBar, QMenu, QFileDialog, QMessageBox, QToolBar, QStatusBar)
+                            QMenuBar, QMenu, QFileDialog, QMessageBox, QToolBar, QStatusBar, QTextBrowser)
 from PyQt6.QtCore import Qt, QCoreApplication
+from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtGui import QIcon, QAction
 from editor import Editor
+import mistune
+
+SINGLE_INSTANCE_KEY = "MarkGT_SingleInstance"
+
+def is_another_instance_running():
+    socket = QLocalSocket()
+    socket.connectToServer(SINGLE_INSTANCE_KEY)
+    if socket.waitForConnected(100):
+        if len(sys.argv) > 1:
+            msg = sys.argv[1]
+            socket.write(msg.encode("utf-8"))
+            socket.flush()
+            socket.waitForBytesWritten(100)
+        socket.disconnectFromServer()
+        return True
+    return False
+
+def create_single_instance_server(window):
+    QLocalServer.removeServer(SINGLE_INSTANCE_KEY)
+    server = QLocalServer()
+    server.listen(SINGLE_INSTANCE_KEY)
+    def on_new_connection():
+        client = server.nextPendingConnection()
+        if client and client.waitForReadyRead(100):
+            msg = client.readAll().data().decode("utf-8").strip()
+            if msg and os.path.exists(msg):
+                window.editor.open_file(msg)
+                window.current_file_path = msg
+                window.is_dirty = False
+                window.update_window_title()
+                window.status_bar.showMessage(f'已打开文件: {msg}')
+                window.showNormal()
+                window.activateWindow()
+                window.raise_()
+        client.disconnectFromServer()
+    server.newConnection.connect(on_new_connection)
+    return server
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -19,6 +57,7 @@ class MainWindow(QMainWindow):
         self.setup_toolbar()  # 添加工具栏设置
         self.setup_menubar()
         self.setup_connections()
+        # self.setup_local_server()
 
     def init_ui(self):
         # 设置窗口标题
@@ -94,9 +133,9 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
 
     def setup_toolbar(self):
-        # 创建工具栏
-        toolbar = QToolBar("Markdown 工具栏")
-        toolbar.setMovable(False)  # 禁止移动工具栏
+        """创建工具栏"""
+        toolbar = QToolBar()
+        toolbar.setMovable(False)
         self.addToolBar(toolbar)
 
         # 添加标题按钮
@@ -145,7 +184,7 @@ class MainWindow(QMainWindow):
 
         # 添加链接和图片按钮
         link_action = QAction("链接", self)
-        link_action.triggered.connect(lambda: self.insert_markdown("[", "](url)"))
+        link_action.triggered.connect(lambda: self.insert_markdown("[链接文本](" + "链接地址" + " " + "\"可选的链接标题\")"))
         toolbar.addAction(link_action)
 
         image_action = QAction("图片", self)
@@ -156,27 +195,55 @@ class MainWindow(QMainWindow):
         """在当前光标位置插入 Markdown 语法"""
         current_tab = self.editor.get_current_tab()
         if current_tab:
-            editor = current_tab['editor']  # 这是 CustomEditor (QsciScintilla) 实例
+            # 获取当前编辑器（可能是编辑器或预览区域）
+            current_editor = self.editor.get_current_editor()
             
-            # 获取当前光标位置
-            line, index = editor.getCursorPosition()
-            
-            # 获取选中的文本
-            if editor.hasSelectedText():
-                # 获取选中文本的起始和结束位置
-                start_line, start_index = editor.getSelectionStart()
-                end_line, end_index = editor.getSelectionEnd()
-                # 获取选中的文本
-                selected_text = editor.selectedText()
-                # 删除选中的文本
-                editor.setSelection(start_line, start_index, end_line, end_index)
-                editor.replaceSelectedText(f"{prefix}{selected_text}{suffix}")
+            if isinstance(current_editor, QTextBrowser):
+                # 预览编辑模式下插入
+                text_cursor = current_editor.textCursor()
+                selected_text = text_cursor.selectedText()
+                
+                if selected_text:
+                    # 如果有选中文本，替换选中文本
+                    new_text = f"{prefix}{selected_text}{suffix}"
+                    text_cursor.insertText(new_text)
+                else:
+                    # 在光标位置插入文本
+                    text_cursor.insertText(prefix + suffix)
+                    # 将光标移回前缀后，后缀前
+                    if suffix:
+                        position = text_cursor.position()
+                        text_cursor.setPosition(position - len(suffix))
+                        current_editor.setTextCursor(text_cursor)
+                
+                # 确保编辑器获得焦点
+                current_editor.setFocus()
             else:
-                # 在光标位置插入文本
-                editor.insert(f"{prefix}")
-            
-            # 将光标移动到插入的文本之后
-            editor.setCursorPosition(line, index + len(prefix))
+                # 原始编辑器模式
+                editor = current_tab['editor']
+                
+                # 获取当前光标位置
+                line, index = editor.getCursorPosition()
+                
+                # 获取选中的文本
+                if editor.hasSelectedText():
+                    # 获取选中文本的起始和结束位置
+                    start_line, start_index = editor.getSelectionStart()
+                    end_line, end_index = editor.getSelectionEnd()
+                    # 获取选中的文本
+                    selected_text = editor.selectedText()
+                    # 删除选中的文本
+                    editor.setSelection(start_line, start_index, end_line, end_index)
+                    editor.replaceSelectedText(f"{prefix}{selected_text}{suffix}")
+                else:
+                    # 在光标位置插入文本
+                    editor.insert(f"{prefix}{suffix}")
+                    # 将光标移动到插入的前缀之后，后缀之前
+                    if suffix:
+                        editor.setCursorPosition(line, index + len(prefix))
+                    else:
+                        # 将光标移动到插入的文本之后
+                        editor.setCursorPosition(line, index + len(prefix))
 
     def insert_table(self):
         """插入一个基本的 Markdown 表格"""
@@ -187,16 +254,28 @@ class MainWindow(QMainWindow):
 """
         current_tab = self.editor.get_current_tab()
         if current_tab:
-            editor = current_tab['editor']  # 使用 editor 而不是 text_edit
+            # 获取当前编辑器（可能是编辑器或预览区域）
+            current_editor = self.editor.get_current_editor()
             
-            # 获取当前光标位置
-            line, index = editor.getCursorPosition()
-            
-            # 在光标位置插入表格模板
-            editor.insert(table_template)
-            
-            # 将光标移动到插入的表格之后
-            editor.setCursorPosition(line + 4, 0)  # 移动到表格后的新行
+            if isinstance(current_editor, QTextBrowser):
+                # 预览编辑模式下插入
+                text_cursor = current_editor.textCursor()
+                text_cursor.insertText(table_template)
+                
+                # 确保编辑器获得焦点
+                current_editor.setFocus()
+            else:
+                # 原始编辑器模式
+                editor = current_tab['editor']
+                
+                # 获取当前光标位置
+                line, index = editor.getCursorPosition()
+                
+                # 在光标位置插入表格模板
+                editor.insert(table_template)
+                
+                # 将光标移动到插入的表格之后
+                editor.setCursorPosition(line + 4, 0)  # 移动到表格后的新行
 
     def setup_connections(self):
         # 连接标签页切换信号
@@ -330,6 +409,21 @@ class MainWindow(QMainWindow):
         # 创建视图菜单
         view_menu = menubar.addMenu("视图")
         
+        # 添加预览编辑模式切换
+        preview_edit_action = QAction("预览编辑", self)
+        preview_edit_action.setCheckable(True)
+        preview_edit_action.setShortcut("Ctrl+E")
+        preview_edit_action.triggered.connect(self.toggle_preview_edit_mode)
+        view_menu.addAction(preview_edit_action)
+        
+        # 添加目录栏显示切换
+        toc_action = QAction("显示目录栏", self)
+        toc_action.setCheckable(True)
+        toc_action.setChecked(True)
+        toc_action.triggered.connect(self.toggle_toc_visible)
+        view_menu.addAction(toc_action)
+        self.toc_action = toc_action  # 保存引用，便于后续操作
+        
         # 添加自动换行动作
         wrap_action = QAction("自动换行", self)
         wrap_action.setCheckable(True)
@@ -344,40 +438,12 @@ class MainWindow(QMainWindow):
         split_action.triggered.connect(self.editor.toggle_split)
         view_menu.addAction(split_action)
 
-    def process_markdown(self, text):
-        """处理 Markdown 文本，确保表格和列表格式正确"""
-        lines = text.split('\n')
-        processed_lines = []
-        in_table = False
-        table_buffer = []
+    def toggle_preview_edit_mode(self, checked):
+        """切换预览编辑模式"""
+        self.editor.toggle_preview_edit_mode(checked)
 
-        for line in lines:
-            # 检查是否是表格行
-            if '|' in line and line.count('|') >= 2:
-                in_table = True
-                table_buffer.append(line)
-            else:
-                if in_table:
-                    # 处理表格缓冲区
-                    if table_buffer:
-                        processed_lines.extend(table_buffer)
-                        processed_lines.append('')  # 添加空行作为表格结束
-                    table_buffer = []
-                    in_table = False
-
-                # 检查是否是列表项
-                list_match = re.match(r'^(\s*)[*+-]\s+(.+)$', line)
-                if list_match:
-                    processed_lines.append(f'* {list_match.group(2)}')
-                else:
-                    processed_lines.append(line)
-
-        # 处理最后的表格（如果有）
-        if table_buffer:
-            processed_lines.extend(table_buffer)
-            processed_lines.append('')
-
-        return '\n'.join(processed_lines)
+    def toggle_toc_visible(self, checked):
+        self.editor.set_toc_visible(checked)
 
 def log_error(error_msg, level="INFO"):
     """记录错误到日志文件"""
@@ -416,57 +482,31 @@ def log_error(error_msg, level="INFO"):
 def setup_qt_environment():
     """设置 Qt 环境变量"""
     if getattr(sys, 'frozen', False):
-        # 获取应用程序目录
         app_dir = os.path.dirname(sys.executable)
-        # 设置插件路径
         os.environ['QT_PLUGIN_PATH'] = os.path.join(app_dir, '_internal', 'PyQt6', 'Qt6', 'plugins')
         os.environ['QML2_IMPORT_PATH'] = os.path.join(app_dir, '_internal', 'PyQt6', 'Qt6', 'qml')
-        # 设置应用程序目录
         QCoreApplication.addLibraryPath(os.path.join(app_dir, '_internal', 'PyQt6', 'Qt6', 'plugins'))
 
 def main():
-    try:
-        # 设置 Qt 环境
-        setup_qt_environment()
-        
-        app = QApplication(sys.argv)
-        window = MainWindow()
-        
-        # 处理命令行参数
-        if len(sys.argv) > 1:
-            try:
-                # 获取第一个参数（文件路径）
-                file_path = sys.argv[1]
-                # 转换为绝对路径
-                file_path = os.path.abspath(file_path)
-                
-                # 记录文件信息
-                log_error(f"尝试打开文件: {file_path}", "DEBUG")
-                
-                # 检查文件是否存在
-                if os.path.exists(file_path):
-                    # 打开文件
-                    if window.editor.open_file(file_path):
-                        window.current_file_path = file_path
-                        window.is_dirty = False
-                        window.update_window_title()
-                        window.status_bar.showMessage(f'已打开文件: {file_path}')
-                        log_error(f"成功打开文件: {file_path}", "INFO")
-                    else:
-                        log_error(f"无法打开文件: {file_path}", "ERROR")
-                else:
-                    log_error(f"文件不存在: {file_path}", "ERROR")
-            except Exception as e:
-                error_msg = f"打开文件时出错: {str(e)}\n{traceback.format_exc()}"
-                log_error(error_msg, "ERROR")
-                QMessageBox.warning(window, '错误', f'打开文件时出错：{str(e)}')
-        
-        sys.exit(app.exec())
-    except Exception as e:
-        error_msg = f"程序运行出错: {str(e)}\n{traceback.format_exc()}"
-        log_error(error_msg, "CRITICAL")
-        QMessageBox.critical(None, '错误', f'程序运行出错：{str(e)}')
-        sys.exit(1)
+    if is_another_instance_running():
+        sys.exit(0)
+    setup_qt_environment()
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    create_single_instance_server(window)
+    # 启动时带文件参数
+    if len(sys.argv) > 1:
+        file_path = os.path.abspath(sys.argv[1])
+        if os.path.exists(file_path):
+            window.editor.open_file(file_path)
+            window.current_file_path = file_path
+            window.is_dirty = False
+            window.update_window_title()
+            window.status_bar.showMessage(f'已打开文件: {file_path}')
+            window.showNormal()
+            window.activateWindow()
+            window.raise_()
+    sys.exit(app.exec())
 
 if __name__ == '__main__':
     main() 
